@@ -40,7 +40,9 @@ def save_dogs(csv_path, dogs):
         csv_path: Path to the CSV file.
         dogs: A list of Dog objects.
     """
-    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    parent_dir = os.path.dirname(csv_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
 
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
