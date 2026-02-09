@@ -1,0 +1,11 @@
+services:
+  dog-checker:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - dog-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  dog-data:
