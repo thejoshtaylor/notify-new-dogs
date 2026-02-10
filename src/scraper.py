@@ -82,6 +82,7 @@ def scrape_dogs(shelter_url):
     """Scrape the shelter website and return a list of Dog objects.
 
     Supports multiple shelter website formats:
+    - Result_* divs (divs with IDs matching 'Result_*' pattern containing line_* divs)
     - PetHarbor Shelter Portal (Bootstrap card layout with labeled fields)
     - PetHarbor classic (ResultsTable with tr/td rows)
     - Generic shelter sites with card-based layouts
