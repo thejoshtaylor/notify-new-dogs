@@ -8,7 +8,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.notifier import send_notification
-from src.scraper import Dog, _clean_petharbor_name, parse_age, scrape_dogs
+from src.scraper import (
+    Dog,
+    _clean_petharbor_name,
+    _extract_onclick_url,
+    _extract_result_div_text,
+    parse_age,
+    scrape_dogs,
+)
 from src.storage import find_new_dogs, load_existing_dogs, save_dogs
 
 
@@ -609,6 +616,159 @@ class TestResultDivs:
         assert dogs[0].name == "Rex"
         assert dogs[0].breed == "Bulldog"
         assert dogs[0].age_years == 2.0
+
+
+# --- gridResult format tests ---
+
+
+class TestGridResultFormat:
+    @patch("src.scraper.requests.get")
+    def test_scrape_grid_result_format(self, mock_get):
+        """Test scraping the gridResult format with onclick URLs and text_* spans."""
+        html = """
+        <html>
+        <body>
+        <div class="gridResult" tabindex="0" id="Result_A170391"
+             onclick="Details('WestSlopeShelterAdoptablePets', 'ELDR', 'A170391')">
+            <img src="/image/685518075" alt="Image_A170391" id="AnimalImage_A170391" loading="lazy">
+            <div class="line_Name">
+                <span class="column_Name columnName_Name results">Name</span>
+                <span class="ellipsis ellipsis_Name results">: </span>
+                <span class="text_Name results">OSCAR (A170391)</span>
+                <br>
+            </div>
+            <div class="line_Gender">
+                <span class="column_Gender columnName_Gender results">Gender</span>
+                <span class="ellipsis ellipsis_Gender results">: </span>
+                <span class="text_Gender results">Neutered Male</span>
+                <br>
+            </div>
+            <div class="line_Breed">
+                <span class="column_Breed columnName_Breed results">Breed</span>
+                <span class="ellipsis ellipsis_Breed results">: </span>
+                <span class="text_Breed results">Pit Bull Terrier and German Shepherd Dog</span>
+                <br>
+            </div>
+            <div class="line_Age">
+                <span class="column_Age columnName_Age results">Age</span>
+                <span class="ellipsis ellipsis_Age results">: </span>
+                <span class="text_Age results">16 weeks old</span>
+                <br>
+            </div>
+        </div>
+        <div class="gridResult" tabindex="0" id="Result_A170450"
+             onclick="Details('WestSlopeShelterAdoptablePets', 'ELDR', 'A170450')">
+            <img src="/image/685518100" alt="Image_A170450" id="AnimalImage_A170450" loading="lazy">
+            <div class="line_Name">
+                <span class="column_Name columnName_Name results">Name</span>
+                <span class="ellipsis ellipsis_Name results">: </span>
+                <span class="text_Name results">DAISY (A170450)</span>
+                <br>
+            </div>
+            <div class="line_Gender">
+                <span class="column_Gender columnName_Gender results">Gender</span>
+                <span class="ellipsis ellipsis_Gender results">: </span>
+                <span class="text_Gender results">Spayed Female</span>
+                <br>
+            </div>
+            <div class="line_Breed">
+                <span class="column_Breed columnName_Breed results">Breed</span>
+                <span class="ellipsis ellipsis_Breed results">: </span>
+                <span class="text_Breed results">Labrador Retriever</span>
+                <br>
+            </div>
+            <div class="line_Age">
+                <span class="column_Age columnName_Age results">Age</span>
+                <span class="ellipsis ellipsis_Age results">: </span>
+                <span class="text_Age results">2 years old</span>
+                <br>
+            </div>
+        </div>
+        </body>
+        </html>
+        """
+        mock_response = MagicMock()
+        mock_response.text = html
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        dogs = scrape_dogs("https://petharborshelter.com/WestSlopeShelterAdoptablePets")
+
+        assert len(dogs) == 2
+
+        # First dog: OSCAR
+        assert dogs[0].name == "OSCAR"
+        assert dogs[0].breed == "Pit Bull Terrier and German Shepherd Dog"
+        assert dogs[0].age_years == pytest.approx(16.0 / 52.0)
+        assert dogs[0].sex == "Neutered Male"
+        assert "/WestSlopeShelterAdoptablePets/Details/ELDR/A170391" in dogs[0].url
+        assert "/image/685518075" in dogs[0].image_url
+
+        # Second dog: DAISY
+        assert dogs[1].name == "DAISY"
+        assert dogs[1].breed == "Labrador Retriever"
+        assert dogs[1].age_years == 2.0
+        assert dogs[1].sex == "Spayed Female"
+        assert "/WestSlopeShelterAdoptablePets/Details/ELDR/A170450" in dogs[1].url
+
+    def test_extract_onclick_url(self):
+        """Test parsing onclick Details() calls into URLs."""
+        from bs4 import BeautifulSoup
+
+        html = '<div onclick="Details(\'WestSlopeShelterAdoptablePets\', \'ELDR\', \'A170391\')"></div>'
+        soup = BeautifulSoup(html, "lxml")
+        div = soup.find("div")
+
+        url = _extract_onclick_url(div, "https://shelter.com")
+        assert url == "https://shelter.com/WestSlopeShelterAdoptablePets/Details/ELDR/A170391"
+
+    def test_extract_onclick_url_no_onclick(self):
+        """Test that missing onclick returns empty string."""
+        from bs4 import BeautifulSoup
+
+        html = "<div></div>"
+        soup = BeautifulSoup(html, "lxml")
+        div = soup.find("div")
+
+        url = _extract_onclick_url(div, "https://shelter.com")
+        assert url == ""
+
+    def test_extract_result_div_text_prefers_text_span(self):
+        """Test that text_* spans are preferred over generic results spans."""
+        from bs4 import BeautifulSoup
+
+        html = """
+        <div id="Result_A170391">
+            <div class="line_Name">
+                <span class="column_Name results">Name</span>
+                <span class="ellipsis results">: </span>
+                <span class="text_Name results">OSCAR (A170391)</span>
+            </div>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        div = soup.find("div", id="Result_A170391")
+
+        name = _extract_result_div_text(div, "Name")
+        assert name == "OSCAR (A170391)"
+
+    def test_extract_result_div_text_fallback_to_last_results_span(self):
+        """Test fallback to last results span when no text_* span exists."""
+        from bs4 import BeautifulSoup
+
+        html = """
+        <div id="Result_1">
+            <div class="line_Name">
+                <span class="label">Name:</span>
+                <span class="results">Buddy</span>
+            </div>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        div = soup.find("div", id="Result_1")
+
+        name = _extract_result_div_text(div, "Name")
+        assert name == "Buddy"
 
 
 # --- Integration test for check_for_new_dogs ---
