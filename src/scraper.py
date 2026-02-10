@@ -252,6 +252,13 @@ def _clean_petharbor_name(raw_name):
     return cleaned if cleaned else None
 
 
+def _is_label_or_separator(text, label_pattern):
+    """Check if text is just a label name, a colon/separator, or empty."""
+    if not text or text in (":", ": "):
+        return True
+    return bool(re.match(rf"^{label_pattern}$", text, re.I))
+
+
 def _extract_labeled_value(card, label_pattern):
     """Extract a value from a labeled field in a card.
 
@@ -272,7 +279,7 @@ def _extract_labeled_value(card, label_pattern):
         if cleaned and cleaned != text:
             return cleaned.strip()
         # Skip elements whose text is just the label, a colon/separator, or empty
-        if re.match(rf"^{label_pattern}$", text, re.I) or not text or text in (":", ": "):
+        if _is_label_or_separator(text, label_pattern):
             continue
         return text
 
@@ -573,7 +580,7 @@ def _extract_field(card, text_content, field_names):
             text = el.get_text(strip=True)
             # Skip elements whose text is just the field name (label only),
             # a colon/separator, or empty
-            if re.match(rf"^{field_name}$", text, re.I) or not text or text in (":", ": "):
+            if _is_label_or_separator(text, field_name):
                 continue
             return text
 
