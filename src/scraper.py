@@ -310,18 +310,22 @@ def _extract_labeled_value(card, label_pattern):
 
 
 def _try_result_divs(soup, base_url):
-    """Try to parse divs with IDs matching 'Result_*' pattern.
+    """Try to parse divs with IDs matching 'Result_*' pattern or class 'gridResult'.
 
-    This format uses divs with IDs like 'Result_1', 'Result_2', etc.
+    This format uses divs with IDs like 'Result_1', 'Result_A170391', etc.,
+    or divs with class 'gridResult'.
     Inside each div:
     - img tag with the image URL
-    - div with class 'line_Name' containing a span with class 'results' (dog name)
-    - div with class 'line_Gender' containing a span with class 'results' (gender)
-    - div with class 'line_Breed' containing a span with class 'results' (breed)
-    - div with class 'line_Age' containing a span with class 'results' (age)
+    - div with class 'line_Name' containing a span with class 'text_Name' or 'results' (dog name)
+    - div with class 'line_Gender' containing a span with class 'text_Gender' or 'results' (gender)
+    - div with class 'line_Breed' containing a span with class 'text_Breed' or 'results' (breed)
+    - div with class 'line_Age' containing a span with class 'text_Age' or 'results' (age)
+    - Optional onclick attribute with Details() call for URL construction
     """
-    # Find all divs with IDs matching 'Result_*' pattern
+    # Find all divs with IDs matching 'Result_*' pattern or class 'gridResult'
     result_divs = soup.find_all("div", id=re.compile(r"^Result_", re.I))
+    if not result_divs:
+        result_divs = soup.find_all("div", class_="gridResult")
     if not result_divs:
         return None
 
@@ -343,39 +347,22 @@ def _try_result_divs(soup, base_url):
 def _parse_result_div(result_div, base_url):
     """Parse a single Result_* div into a Dog object."""
     # Extract name from line_Name div
-    name = ""
-    line_name = result_div.find("div", class_="line_Name")
-    if line_name:
-        name_span = line_name.find("span", class_="results")
-        if name_span:
-            name = name_span.get_text(strip=True)
+    name = _extract_result_div_text(result_div, "Name")
 
     if not name:
         return None
 
+    # Clean name by removing parenthesized ID like "(A170391)"
+    name = _clean_petharbor_name(name) or name
+
     # Extract gender from line_Gender div
-    sex = ""
-    line_gender = result_div.find("div", class_="line_Gender")
-    if line_gender:
-        gender_span = line_gender.find("span", class_="results")
-        if gender_span:
-            sex = gender_span.get_text(strip=True)
+    sex = _extract_result_div_text(result_div, "Gender")
 
     # Extract breed from line_Breed div
-    breed = ""
-    line_breed = result_div.find("div", class_="line_Breed")
-    if line_breed:
-        breed_span = line_breed.find("span", class_="results")
-        if breed_span:
-            breed = breed_span.get_text(strip=True)
+    breed = _extract_result_div_text(result_div, "Breed")
 
     # Extract age from line_Age div
-    age_text = ""
-    line_age = result_div.find("div", class_="line_Age")
-    if line_age:
-        age_span = line_age.find("span", class_="results")
-        if age_span:
-            age_text = age_span.get_text(strip=True)
+    age_text = _extract_result_div_text(result_div, "Age")
 
     age_years = parse_age(age_text)
 
@@ -386,11 +373,13 @@ def _parse_result_div(result_div, base_url):
         src = img_el.get("src", "") or img_el.get("data-src", "")
         image_url = _resolve_url(src, base_url)
 
-    # Extract link URL
+    # Extract link URL - try <a> tag first, then onclick attribute
     url = ""
     link_el = result_div.find("a", href=True)
     if link_el:
         url = _resolve_url(link_el["href"], base_url)
+    else:
+        url = _extract_onclick_url(result_div, base_url)
 
     return Dog(
         name=name,
@@ -401,6 +390,47 @@ def _parse_result_div(result_div, base_url):
         url=url,
         image_url=image_url,
     )
+
+
+def _extract_result_div_text(result_div, field_name):
+    """Extract text value from a line_* div inside a Result div.
+
+    Tries the text_* span first (e.g., text_Name), then falls back to
+    finding the last span with class 'results' in the line div.
+    """
+    line_div = result_div.find("div", class_=f"line_{field_name}")
+    if not line_div:
+        return ""
+
+    # Try text_* span first (e.g., text_Name, text_Breed)
+    text_span = line_div.find("span", class_=f"text_{field_name}")
+    if text_span:
+        return text_span.get_text(strip=True)
+
+    # Fall back to the last span with class 'results' (skip label/ellipsis spans)
+    result_spans = line_div.find_all("span", class_="results")
+    if result_spans:
+        return result_spans[-1].get_text(strip=True)
+
+    return ""
+
+
+def _extract_onclick_url(element, base_url):
+    """Extract a URL from an onclick Details() call.
+
+    Parses onclick="Details('WestSlopeShelterAdoptablePets', 'ELDR', 'A170391')"
+    into "/WestSlopeShelterAdoptablePets/Details/ELDR/A170391".
+    """
+    onclick = element.get("onclick", "")
+    if not onclick:
+        return ""
+
+    match = re.search(r"Details\(\s*['\"]([^'\"]*)['\"]?\s*,\s*['\"]([^'\"]*)['\"]?\s*,\s*['\"]([^'\"]*)['\"]?\s*\)", onclick)
+    if match:
+        path = f"/{match.group(1)}/Details/{match.group(2)}/{match.group(3)}"
+        return _resolve_url(path, base_url)
+
+    return ""
 
 
 def _try_petharbor_classic(soup, base_url):
