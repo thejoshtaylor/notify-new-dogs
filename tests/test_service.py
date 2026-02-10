@@ -52,6 +52,21 @@ class TestParseAge:
     def test_months_no_space(self):
         assert parse_age("6mo") == pytest.approx(0.5)
 
+    def test_weeks_format(self):
+        assert parse_age("16 weeks") == pytest.approx(16.0 / 52.0)
+
+    def test_weeks_old_format(self):
+        assert parse_age("16 weeks old") == pytest.approx(16.0 / 52.0)
+
+    def test_year_old_suffix(self):
+        assert parse_age("1 year old") == 1.0
+
+    def test_years_old_suffix(self):
+        assert parse_age("5 years old") == 5.0
+
+    def test_year_months_old_suffix(self):
+        assert parse_age("1 year, 4 months old") == pytest.approx(1 + 4/12.0)
+
 
 # --- Dog model tests ---
 
@@ -426,6 +441,174 @@ class TestPetHarborPortal:
         dogs = scrape_dogs("https://shelter.petharbor.com/available-dogs")
         # No animal cards present, should return empty list
         assert len(dogs) == 0
+
+
+# --- Result_* div format tests ---
+
+
+class TestResultDivs:
+    @patch("src.scraper.requests.get")
+    def test_scrape_result_divs_format(self, mock_get):
+        """Test scraping divs with IDs matching Result_* pattern."""
+        html = """
+        <html>
+        <body>
+        <div class="results-container">
+          <div id="Result_1">
+            <img src="https://shelter.com/photos/buddy.jpg" />
+            <a href="/dogs/buddy">View Details</a>
+            <div class="line_Name">
+              <span class="label">Name:</span>
+              <span class="results">Buddy</span>
+            </div>
+            <div class="line_Gender">
+              <span class="label">Gender:</span>
+              <span class="results">Male</span>
+            </div>
+            <div class="line_Breed">
+              <span class="label">Breed:</span>
+              <span class="results">Labrador Retriever</span>
+            </div>
+            <div class="line_Age">
+              <span class="label">Age:</span>
+              <span class="results">1 year, 4 months old</span>
+            </div>
+          </div>
+          <div id="Result_2">
+            <img src="https://shelter.com/photos/luna.jpg" />
+            <a href="/dogs/luna">View Details</a>
+            <div class="line_Name">
+              <span class="label">Name:</span>
+              <span class="results">Luna</span>
+            </div>
+            <div class="line_Gender">
+              <span class="label">Gender:</span>
+              <span class="results">Female</span>
+            </div>
+            <div class="line_Breed">
+              <span class="label">Breed:</span>
+              <span class="results">Poodle Mix</span>
+            </div>
+            <div class="line_Age">
+              <span class="label">Age:</span>
+              <span class="results">16 weeks old</span>
+            </div>
+          </div>
+          <div id="Result_3">
+            <img src="https://shelter.com/photos/max.jpg" />
+            <a href="/dogs/max">View Details</a>
+            <div class="line_Name">
+              <span class="label">Name:</span>
+              <span class="results">Max</span>
+            </div>
+            <div class="line_Gender">
+              <span class="label">Gender:</span>
+              <span class="results">Male</span>
+            </div>
+            <div class="line_Breed">
+              <span class="label">Breed:</span>
+              <span class="results">German Shepherd</span>
+            </div>
+            <div class="line_Age">
+              <span class="label">Age:</span>
+              <span class="results">5 years</span>
+            </div>
+          </div>
+          <div id="Result_4">
+            <img src="https://shelter.com/photos/daisy.jpg" />
+            <a href="/dogs/daisy">View Details</a>
+            <div class="line_Name">
+              <span class="label">Name:</span>
+              <span class="results">Daisy</span>
+            </div>
+            <div class="line_Gender">
+              <span class="label">Gender:</span>
+              <span class="results">Female</span>
+            </div>
+            <div class="line_Breed">
+              <span class="label">Breed:</span>
+              <span class="results">Beagle</span>
+            </div>
+            <div class="line_Age">
+              <span class="label">Age:</span>
+              <span class="results">1 year old</span>
+            </div>
+          </div>
+        </div>
+        </body>
+        </html>
+        """
+        mock_response = MagicMock()
+        mock_response.text = html
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        dogs = scrape_dogs("https://shelter.com/available-dogs")
+
+        assert len(dogs) == 4
+
+        # First dog: Buddy - 1 year, 4 months old
+        assert dogs[0].name == "Buddy"
+        assert dogs[0].breed == "Labrador Retriever"
+        assert dogs[0].age_years == pytest.approx(1 + 4/12.0)
+        assert dogs[0].sex == "Male"
+        assert dogs[0].image_url == "https://shelter.com/photos/buddy.jpg"
+        assert "/dogs/buddy" in dogs[0].url
+
+        # Second dog: Luna - 16 weeks old
+        assert dogs[1].name == "Luna"
+        assert dogs[1].breed == "Poodle Mix"
+        assert dogs[1].age_years == pytest.approx(16.0 / 52.0)
+        assert dogs[1].sex == "Female"
+        assert dogs[1].image_url == "https://shelter.com/photos/luna.jpg"
+
+        # Third dog: Max - 5 years
+        assert dogs[2].name == "Max"
+        assert dogs[2].breed == "German Shepherd"
+        assert dogs[2].age_years == 5.0
+        assert dogs[2].sex == "Male"
+
+        # Fourth dog: Daisy - 1 year old
+        assert dogs[3].name == "Daisy"
+        assert dogs[3].breed == "Beagle"
+        assert dogs[3].age_years == 1.0
+        assert dogs[3].sex == "Female"
+
+    @patch("src.scraper.requests.get")
+    def test_result_divs_case_insensitive(self, mock_get):
+        """Test that Result_* matching is case insensitive."""
+        html = """
+        <html>
+        <body>
+          <div id="result_1">
+            <img src="https://shelter.com/photos/rex.jpg" />
+            <div class="line_Name">
+              <span class="results">Rex</span>
+            </div>
+            <div class="line_Gender">
+              <span class="results">Male</span>
+            </div>
+            <div class="line_Breed">
+              <span class="results">Bulldog</span>
+            </div>
+            <div class="line_Age">
+              <span class="results">2 years</span>
+            </div>
+          </div>
+        </body>
+        </html>
+        """
+        mock_response = MagicMock()
+        mock_response.text = html
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        dogs = scrape_dogs("https://shelter.com/available-dogs")
+
+        assert len(dogs) == 1
+        assert dogs[0].name == "Rex"
+        assert dogs[0].breed == "Bulldog"
+        assert dogs[0].age_years == 2.0
 
 
 # --- Integration test for check_for_new_dogs ---

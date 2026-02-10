@@ -41,7 +41,8 @@ def parse_age(age_text):
 
     Handles formats like:
         '2 years', '3 Years', '6 months', '1 year 3 months',
-        '2 yrs', '6 mos', '2yr', '6mo'
+        '2 yrs', '6 mos', '2yr', '6mo', '16 weeks old',
+        '1 year old', '1 year, 4 months old', '5 years'
 
     Returns the age in years as a float, or 0.0 if unparseable.
     """
@@ -49,6 +50,8 @@ def parse_age(age_text):
         return 0.0
 
     age_text = age_text.strip().lower()
+    # Remove "old" suffix if present
+    age_text = re.sub(r'\s+old\s*$', '', age_text)
     total_years = 0.0
 
     year_match = re.search(r"(\d+)\s*(?:year|yr)s?", age_text)
@@ -58,6 +61,10 @@ def parse_age(age_text):
     month_match = re.search(r"(\d+)\s*(?:month|mo)s?", age_text)
     if month_match:
         total_years += int(month_match.group(1)) / 12.0
+
+    week_match = re.search(r"(\d+)\s*(?:week|wk)s?", age_text)
+    if week_match:
+        total_years += int(week_match.group(1)) / 52.0
 
     return total_years
 
@@ -75,6 +82,7 @@ def scrape_dogs(shelter_url):
     """Scrape the shelter website and return a list of Dog objects.
 
     Supports multiple shelter website formats:
+    - Result_* divs (divs with IDs matching 'Result_*' pattern containing line_* divs)
     - PetHarbor Shelter Portal (Bootstrap card layout with labeled fields)
     - PetHarbor classic (ResultsTable with tr/td rows)
     - Generic shelter sites with card-based layouts
@@ -100,7 +108,12 @@ def scrape_dogs(shelter_url):
 
     soup = BeautifulSoup(response.text, "lxml")
 
-    # Try PetHarbor Shelter Portal format first
+    # Try Result_* div format first
+    dogs = _try_result_divs(soup, shelter_url)
+    if dogs:
+        return dogs
+
+    # Try PetHarbor Shelter Portal format
     dogs = _try_petharbor_portal(soup, shelter_url)
     if dogs:
         return dogs
@@ -294,6 +307,100 @@ def _extract_labeled_value(card, label_pattern):
                 return match.group(1).strip()
 
     return ""
+
+
+def _try_result_divs(soup, base_url):
+    """Try to parse divs with IDs matching 'Result_*' pattern.
+
+    This format uses divs with IDs like 'Result_1', 'Result_2', etc.
+    Inside each div:
+    - img tag with the image URL
+    - div with class 'line_Name' containing a span with class 'results' (dog name)
+    - div with class 'line_Gender' containing a span with class 'results' (gender)
+    - div with class 'line_Breed' containing a span with class 'results' (breed)
+    - div with class 'line_Age' containing a span with class 'results' (age)
+    """
+    # Find all divs with IDs matching 'Result_*' pattern
+    result_divs = soup.find_all("div", id=re.compile(r"^Result_", re.I))
+    if not result_divs:
+        return None
+
+    logger.info("Detected Result_* div format")
+
+    dogs = []
+    for result_div in result_divs:
+        try:
+            dog = _parse_result_div(result_div, base_url)
+            if dog:
+                dogs.append(dog)
+        except Exception:
+            logger.warning("Failed to parse Result_* div, skipping", exc_info=True)
+
+    logger.info("Found %d dogs (Result_* divs)", len(dogs))
+    return dogs if dogs else None
+
+
+def _parse_result_div(result_div, base_url):
+    """Parse a single Result_* div into a Dog object."""
+    # Extract name from line_Name div
+    name = ""
+    line_name = result_div.find("div", class_="line_Name")
+    if line_name:
+        name_span = line_name.find("span", class_="results")
+        if name_span:
+            name = name_span.get_text(strip=True)
+
+    if not name:
+        return None
+
+    # Extract gender from line_Gender div
+    sex = ""
+    line_gender = result_div.find("div", class_="line_Gender")
+    if line_gender:
+        gender_span = line_gender.find("span", class_="results")
+        if gender_span:
+            sex = gender_span.get_text(strip=True)
+
+    # Extract breed from line_Breed div
+    breed = ""
+    line_breed = result_div.find("div", class_="line_Breed")
+    if line_breed:
+        breed_span = line_breed.find("span", class_="results")
+        if breed_span:
+            breed = breed_span.get_text(strip=True)
+
+    # Extract age from line_Age div
+    age_text = ""
+    line_age = result_div.find("div", class_="line_Age")
+    if line_age:
+        age_span = line_age.find("span", class_="results")
+        if age_span:
+            age_text = age_span.get_text(strip=True)
+
+    age_years = parse_age(age_text)
+
+    # Extract image URL
+    image_url = ""
+    img_el = result_div.find("img")
+    if img_el:
+        src = img_el.get("src", "") or img_el.get("data-src", "")
+        image_url = _resolve_url(src, base_url)
+
+    # Extract link URL
+    url = ""
+    link_el = result_div.find("a", href=True)
+    if link_el:
+        url = _resolve_url(link_el["href"], base_url)
+
+    return Dog(
+        name=name,
+        breed=breed,
+        age_years=age_years,
+        sex=sex,
+        size="",  # Size not available in this format
+        url=url,
+        image_url=image_url,
+    )
 
 
 def _try_petharbor_classic(soup, base_url):
