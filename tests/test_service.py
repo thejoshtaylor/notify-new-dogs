@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.notifier import send_notification
-from src.scraper import Dog, parse_age, scrape_dogs
+from src.scraper import Dog, _clean_petharbor_name, parse_age, scrape_dogs
 from src.storage import find_new_dogs, load_existing_dogs, save_dogs
 
 
@@ -233,6 +233,198 @@ class TestScraper:
         mock_get.return_value = mock_response
 
         dogs = scrape_dogs("https://shelter.com/available-dogs")
+        assert len(dogs) == 0
+
+
+# --- PetHarbor name cleaning tests ---
+
+
+class TestCleanPetharborName:
+    def test_name_with_id(self):
+        assert _clean_petharbor_name("OSCAR (A170391)") == "OSCAR"
+
+    def test_name_without_id(self):
+        assert _clean_petharbor_name("Buddy") == "Buddy"
+
+    def test_name_with_spaces_and_id(self):
+        assert _clean_petharbor_name("LADY BUG (A170500)") == "LADY BUG"
+
+    def test_empty_string(self):
+        assert _clean_petharbor_name("") is None
+
+    def test_only_parenthesized(self):
+        assert _clean_petharbor_name("(A170391)") is None
+
+
+# --- PetHarbor Portal scraper tests ---
+
+
+class TestPetHarborPortal:
+    @patch("src.scraper.requests.get")
+    def test_scrape_petharbor_portal_cards(self, mock_get):
+        """Test scraping a PetHarbor Shelter Portal page with animal cards."""
+        html = """
+        <html>
+        <body>
+        <div class="container">
+          <nav class="navbar navbar-expand-lg navbarCSS">
+            <div class="navHeaderText"></div>
+          </nav>
+          <form action="/PetHarborShelter/GetAnimalBySearchInput" method="post">
+            <input name="SearchText" type="search" />
+          </form>
+          <script>AdoptableAnimals('WestSlopeShelterAdoptablePets')</script>
+
+          <div class="row">
+            <div class="col-lg-4 col-md-6">
+              <div class="card">
+                <img src="https://shelter.com/photos/oscar.jpg" class="card-img-top" />
+                <div class="card-body">
+                  <h5 class="card-title">OSCAR (A170391)</h5>
+                  <p><b>Breed:</b> Pit Bull</p>
+                  <p><b>Age:</b> 2 years</p>
+                  <p><b>Sex:</b> Male</p>
+                  <p><b>Size:</b> Large</p>
+                  <a href="/PetHarborShelter/Detail/A170391">More Info</a>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-4 col-md-6">
+              <div class="card">
+                <img src="https://shelter.com/photos/daisy.jpg" class="card-img-top" />
+                <div class="card-body">
+                  <h5 class="card-title">DAISY (A170450)</h5>
+                  <p><b>Breed:</b> Labrador Retriever</p>
+                  <p><b>Age:</b> 6 months</p>
+                  <p><b>Sex:</b> Female</p>
+                  <p><b>Size:</b> Medium</p>
+                  <a href="/PetHarborShelter/Detail/A170450">More Info</a>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-4 col-md-6">
+              <div class="card">
+                <img src="https://shelter.com/photos/rex.jpg" class="card-img-top" />
+                <div class="card-body">
+                  <h5 class="card-title">REX (A170500)</h5>
+                  <p><b>Breed:</b> German Shepherd</p>
+                  <p><b>Age:</b> 8 years</p>
+                  <p><b>Sex:</b> Male</p>
+                  <p><b>Size:</b> Large</p>
+                  <a href="/PetHarborShelter/Detail/A170500">More Info</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        </body>
+        </html>
+        """
+        mock_response = MagicMock()
+        mock_response.text = html
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        dogs = scrape_dogs("https://shelter.petharbor.com/available-dogs")
+
+        assert len(dogs) == 3
+
+        # First dog: OSCAR
+        assert dogs[0].name == "OSCAR"
+        assert dogs[0].breed == "Pit Bull"
+        assert dogs[0].age_years == 2.0
+        assert dogs[0].sex == "Male"
+        assert dogs[0].size == "Large"
+        assert dogs[0].image_url == "https://shelter.com/photos/oscar.jpg"
+        assert "/PetHarborShelter/Detail/A170391" in dogs[0].url
+
+        # Second dog: DAISY
+        assert dogs[1].name == "DAISY"
+        assert dogs[1].breed == "Labrador Retriever"
+        assert dogs[1].age_years == pytest.approx(0.5)
+        assert dogs[1].sex == "Female"
+
+        # Third dog: REX
+        assert dogs[2].name == "REX"
+        assert dogs[2].age_years == 8.0
+
+    @patch("src.scraper.requests.get")
+    def test_scrape_petharbor_classic_table(self, mock_get):
+        """Test scraping a classic PetHarbor ResultsTable page."""
+        html = """
+        <html>
+        <body>
+        <table class="ResultsTable" align="center" border="0">
+          <tr><th>Photo</th><th>Name</th><th>Sex</th><th>Color</th><th>Breed</th><th>Age</th></tr>
+          <tr>
+            <td><a href="/pet.asp?uession=GRND.A170391">Photo</a></td>
+            <td>OSCAR (A170391)</td>
+            <td>Male</td>
+            <td>Brown</td>
+            <td>Pit Bull</td>
+            <td>2 years</td>
+          </tr>
+          <tr>
+            <td><a href="/pet.asp?uession=GRND.A170450">Photo</a></td>
+            <td>DAISY (A170450)</td>
+            <td>Female</td>
+            <td>Yellow</td>
+            <td>Labrador</td>
+            <td>6 months</td>
+          </tr>
+        </table>
+        </body>
+        </html>
+        """
+        mock_response = MagicMock()
+        mock_response.text = html
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        dogs = scrape_dogs("https://petharbor.com/results.asp")
+
+        assert len(dogs) == 2
+        assert dogs[0].name == "OSCAR"
+        assert dogs[0].breed == "Pit Bull"
+        assert dogs[0].age_years == 2.0
+        assert dogs[0].sex == "Male"
+        assert dogs[1].name == "DAISY"
+        assert dogs[1].age_years == pytest.approx(0.5)
+
+    @patch("src.scraper.requests.get")
+    def test_petharbor_portal_with_nav_only(self, mock_get):
+        """Test that a PetHarbor page with only nav (no cards) returns empty."""
+        html = """
+        <html>
+        <body>
+        <div class="container">
+          <nav class="navbar navbar-expand-lg navbarCSS">
+            <div class="navHeaderText"></div>
+            <div class="navbar-collapse" id="navbarSupportedContent">
+              <ul class="navbar-nav mr-auto">
+                <li class="nav-item navAdopt"
+                    onclick="AdoptableAnimals('WestSlopeShelterAdoptablePets')">
+                  <a class="nav-link active" id="adopt-tab">
+                    <span>Adoptable Pets</span>
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </nav>
+          <form action="/PetHarborShelter/GetAnimalBySearchInput" method="post">
+            <input name="SearchText" type="search" />
+          </form>
+        </div>
+        </body>
+        </html>
+        """
+        mock_response = MagicMock()
+        mock_response.text = html
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        dogs = scrape_dogs("https://shelter.petharbor.com/available-dogs")
+        # No animal cards present, should return empty list
         assert len(dogs) == 0
 
 
