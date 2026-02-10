@@ -264,14 +264,16 @@ def _extract_labeled_value(card, label_pattern):
     - Elements with matching class names
     """
     # Look for elements with a matching class name
-    el = card.find(class_=re.compile(label_pattern, re.I))
-    if el:
+    els = card.find_all(class_=re.compile(label_pattern, re.I))
+    for el in els:
         text = el.get_text(strip=True)
         # If the element text contains the label, strip it
         cleaned = re.sub(rf".*{label_pattern}\s*:\s*", "", text, flags=re.I)
         if cleaned and cleaned != text:
             return cleaned.strip()
-        # If no label in text, it's likely a value-only element
+        # Skip elements whose text is just the label, a colon/separator, or empty
+        if re.match(rf"^{label_pattern}$", text, re.I) or not text or text in (":", ": "):
+            continue
         return text
 
     # Look for dt/dd pairs
@@ -564,11 +566,16 @@ def _extract_field(card, text_content, field_names):
     """Try to extract a field value from a card element."""
     for field_name in field_names:
         # Look for labeled elements
-        el = card.find(
+        els = card.find_all(
             class_=re.compile(rf"{field_name}", re.I)
         )
-        if el:
-            return el.get_text(strip=True)
+        for el in els:
+            text = el.get_text(strip=True)
+            # Skip elements whose text is just the field name (label only),
+            # a colon/separator, or empty
+            if re.match(rf"^{field_name}$", text, re.I) or not text or text in (":", ": "):
+                continue
+            return text
 
         # Look for dt/dd pairs
         dt = card.find("dt", string=re.compile(rf"{field_name}", re.I))

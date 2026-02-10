@@ -11,6 +11,8 @@ from src.notifier import send_notification
 from src.scraper import (
     Dog,
     _clean_petharbor_name,
+    _extract_field,
+    _extract_labeled_value,
     _extract_onclick_url,
     _extract_result_div_text,
     parse_age,
@@ -769,6 +771,71 @@ class TestGridResultFormat:
 
         name = _extract_result_div_text(div, "Name")
         assert name == "Buddy"
+
+
+# --- Age extraction from card HTML tests ---
+
+
+class TestAgeExtractionFromCardHtml:
+    """Test that age is correctly extracted from card HTML with label/value spans."""
+
+    def test_extract_labeled_value_skips_label_span(self):
+        """Test that _extract_labeled_value skips the label span and returns the value."""
+        from bs4 import BeautifulSoup
+
+        html = """
+        <div class="line_Age">
+            <span class="column_Age columnName_Age results">Age</span>
+            <span class="ellipsis ellipsis_Age results">: </span>
+            <span class="text_Age results">16 weeks old</span>
+            <br>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        card = soup.find("div", class_="line_Age")
+
+        val = _extract_labeled_value(card, r"age")
+        assert val == "16 weeks old"
+        assert parse_age(val) == pytest.approx(16.0 / 52.0)
+
+    def test_extract_labeled_value_year_months_old(self):
+        """Test extraction of 'year, months old' format."""
+        from bs4 import BeautifulSoup
+
+        html = """
+        <div class="line_Age">
+            <span class="column_Age columnName_Age results">Age</span>
+            <span class="ellipsis ellipsis_Age results">: </span>
+            <span class="text_Age results">1 year, 4 months old</span>
+            <br>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        card = soup.find("div", class_="line_Age")
+
+        val = _extract_labeled_value(card, r"age")
+        assert val == "1 year, 4 months old"
+        assert parse_age(val) == pytest.approx(1 + 4 / 12.0)
+
+    def test_extract_field_skips_label_span(self):
+        """Test that _extract_field skips the label span and returns the value."""
+        from bs4 import BeautifulSoup
+
+        html = """
+        <div class="line_Age">
+            <span class="column_Age columnName_Age results">Age</span>
+            <span class="ellipsis ellipsis_Age results">: </span>
+            <span class="text_Age results">16 weeks old</span>
+            <br>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        card = soup.find("div", class_="line_Age")
+        text_content = card.get_text(separator="|", strip=True)
+
+        val = _extract_field(card, text_content, ["age"])
+        assert val == "16 weeks old"
+        assert parse_age(val) == pytest.approx(16.0 / 52.0)
 
 
 # --- Integration test for check_for_new_dogs ---
