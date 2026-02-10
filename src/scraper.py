@@ -425,7 +425,7 @@ def _extract_onclick_url(element, base_url):
     if not onclick:
         return ""
 
-    match = re.search(r"Details\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\)", onclick)
+    match = re.search(r"Details\(\s*['\"]([^'\"]*)['\"]?\s*,\s*['\"]([^'\"]*)['\"]?\s*,\s*['\"]([^'\"]*)['\"]?\s*\)", onclick)
     if match:
         path = f"/{match.group(1)}/Details/{match.group(2)}/{match.group(3)}"
         return _resolve_url(path, base_url)
